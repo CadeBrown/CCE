@@ -191,7 +191,9 @@ struct State {
 
     // Gets a list of valid moves (from the 'tomove's players perspective), populating 'res'
     // Clears 'res' first
-    void getmoves(vector<move>& res) const;
+    // If 'ignorepins==true', then generate moves ignoring pinned pieces
+    // If 'ignorecastling==true', then generate moves ignoring castling
+    void getmoves(vector<move>& res, bool ignorepins=false, bool ignorecastling=false) const;
 
     // Queries a tile on the board, and returns whether it is occupied
     // If it was occupied, sets 'c' and 'p' to the color and piece that occupied
@@ -216,7 +218,7 @@ struct State {
         bb mf = ONEHOT(mv.from), mt = ONEHOT(mv.to);
         Color other = tomove == Color::WHITE ? Color::BLACK : Color::WHITE;
 
-        int p;
+        int i, p;
         for (p = 0; p < N_PIECES; ++p) {
             if (piece[p] & mf) {
                 // Found piece moving from
@@ -234,10 +236,18 @@ struct State {
         color[tomove] |= mt;
         color[other] &= ~mt;
 
+
         // Remove piece where it was moving from
         piece[p] &= ~mf;
+
+        // Remove from all pieces
+        for (i = 0; i < N_PIECES; ++i) {
+            piece[i] &= ~mt;
+        }
+
         // Add it back where it is moving to
         piece[p] |= mt;
+
 
         // TODO: Handle castling
         // TODO: Handle en passant
@@ -258,8 +268,8 @@ struct State {
 
     }
 
-    // Returns whether the tile 'tile' is being attacked by the color 'by'
-    bool is_attacked(int tile, Color by) const;
+    // Returns whether the tile 'tile' is being attacked by the color about to move
+    bool is_attacked(int tile) const;
 
 };
 

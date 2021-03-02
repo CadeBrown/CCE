@@ -31,6 +31,10 @@ void Engine::go() {
     // Pick random move
     best_move = moves[rand() % moves.size()];
 
+    //for (int i = 0; i < moves.size(); ++i) {
+    //    cout << moves[i].LAN() << endl;
+    //}
+
     lock.unlock();
 }
 

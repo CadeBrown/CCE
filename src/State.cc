@@ -246,12 +246,11 @@ string State::to_FEN() const {
     // +1, since it is 1 indexed
     r += to_string(fullmove + 1);
 
-
     return r;
 }
 
 // Internal method to determine whether `mv` is a valid move
-bool isvalid(const State& s, const move& mv) {
+bool isvalid(const State& s, const move& mv, bool ignorepins) {
     if (mv.isbad()) {
         // Out of range moves are never good
         return false;
@@ -264,18 +263,53 @@ bool isvalid(const State& s, const move& mv) {
         return false;
     }
 
+    // At this point, just return early
+    if (ignorepins) return true; 
+
     // Create a new state
     State ns = s;
 
     // Apply move
     ns.apply(mv);
+    assert(ns.tomove != s.tomove);
+
+    // Get king position and see if it is attacked
+
+    // Positions of various pieces
+    int ntiles;
+    int tiles[64];
+
+    /* Generate king */
+    ntiles = bbtiles(ns.piece[Piece::K] & ns.color[s.tomove], tiles);
+    assert(ntiles == 1); // Must have exactly 1 king!
+
+    // Now, switch back
+    if (ns.is_attacked(tiles[0])) {
+        // King cannot be attacked!
+        return false;
+    }
+
 
     // Now, determine if it was valid
     return true;
 }
 
 
-void State::getmoves(vector<move>& res) const {
+bool State::is_attacked(int tile) const {
+
+    // Super inefficient! But more correct... We can speed it up later
+    vector<move> moves;
+    getmoves(moves, true, true);
+
+    int i;
+    for (i = 0; i < moves.size(); ++i) {
+        if (moves[i].to == tile) return true;
+    }
+
+    return false;
+}
+
+void State::getmoves(vector<move>& res, bool ignorepins, bool ignorecastling) const {
     res.clear();
 
     // Positions of various pieces
@@ -283,24 +317,25 @@ void State::getmoves(vector<move>& res) const {
     int tiles[64];
 
     // Get the color mask to modify pieces with
-    bb cmask = color[tomove];
+    bb cmask = color[tomove], omask = color[tomove == Color::WHITE ? Color::BLACK : Color::WHITE];
 
     // Try and add '_mv', by checking if it is legal
     #define TRYADD(...) do { \
         move mv_ = __VA_ARGS__; \
-        if (isvalid(*this, mv_)) { \
+        if (isvalid(*this, mv_, ignorepins)) { \
             res.push_back(mv_); \
         } \
     } while (0)
 
-    int from;
+    int from, to;
     int i, j;
+    bb m;
 
     /* Generate king moves */
     ntiles = bbtiles(piece[Piece::K] & cmask, tiles);
     assert(ntiles == 1); // Must have exactly 1 king!
 
-    from = tiles[0];
+    int kingpos = from = tiles[0];
     UNTILE(i, j, from);
     
     if (i >= 1 && j >= 1) TRYADD({from, TILE(i-1, j-1)});
@@ -315,14 +350,196 @@ void State::getmoves(vector<move>& res) const {
     if (i <= 6 && j <= 6)TRYADD({from, TILE(i+1, j+1)});
 
     /* Generate queen moves */
+    ntiles = bbtiles(piece[Piece::Q] & cmask, tiles);
+    for (int k = 0; k < ntiles; ++k) {
+        from = tiles[k];
+        UNTILE(i, j, from);
+
+        // Add [i+n, j+n]
+        for (int n = 1; i + n < 8 && j + n < 8; ++n) {
+            to = TILE(i+n, j+n);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        // Add [i+n, j-n]
+        for (int n = 1; i + n < 8 && j - n >= 0; ++n) {
+            to = TILE(i+n, j-n);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        // Add [i-n, j+n]
+        for (int n = 1; i - n >= 0 && j + n < 8; ++n) {
+            to = TILE(i-n, j+n);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        // Add [i-n, j-n]
+        for (int n = 1; i - n >= 0 && j - n >= 0; ++n) {
+            to = TILE(i-n, j-n);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+
+
+        // Add [*, j]
+        for (int ti = i-1; ti >= 0; --ti) {
+            to = TILE(ti, j);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        for (int ti = i+1; ti < 8; ++ti) {
+            to = TILE(ti, j);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+
+        // Add [i, *]
+        for (int tj = j-1; tj >=0; --tj) {
+            to = TILE(i, tj);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        for (int tj = j+1; tj < 8; ++tj) {
+            to = TILE(i, tj);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+    }
 
     /* Generate bishop moves */
+    ntiles = bbtiles(piece[Piece::B] & cmask, tiles);
+    for (int k = 0; k < ntiles; ++k) {
+        from = tiles[k];
+        UNTILE(i, j, from);
+
+        // Add [i+n, j+n]
+        for (int n = 1; i + n < 8 && j + n < 8; ++n) {
+            to = TILE(i+n, j+n);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        // Add [i+n, j-n]
+        for (int n = 1; i + n < 8 && j - n >= 0; ++n) {
+            to = TILE(i+n, j-n);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        // Add [i-n, j+n]
+        for (int n = 1; i - n >= 0 && j + n < 8; ++n) {
+            to = TILE(i-n, j+n);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        // Add [i-n, j-n]
+        for (int n = 1; i - n >= 0 && j - n >= 0; ++n) {
+            to = TILE(i-n, j-n);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+    }
 
     /* Generate knight moves */
     ntiles = bbtiles(piece[Piece::N] & cmask, tiles);
     for (int k = 0; k < ntiles; ++k) {
         from = tiles[k];
         UNTILE(i, j, from);
+
 
         // Consider all tiles (+-1, +-2) and (+-2, +-1) away, if they are in range
         if (i <= 6 && j <= 5) TRYADD({from, TILE(i+1, j+2)});
@@ -333,10 +550,74 @@ void State::getmoves(vector<move>& res) const {
         if (i <= 5 && j <= 6) TRYADD({from, TILE(i+2, j+1)});
         if (i >= 2 && j <= 6) TRYADD({from, TILE(i-2, j+1)});
         if (i <= 5 && j >= 1) TRYADD({from, TILE(i+2, j-1)});
-        if (i >= 2 && j >= 1) TRYADD({from, TILE(i-2, j-1)});
+        if (i >= 2 && j >= 1) {
+            TRYADD({from, TILE(i-2, j-1)});
+        }
     }
 
     /* Generate rook moves */
+    ntiles = bbtiles(piece[Piece::R] & cmask, tiles);
+    for (int k = 0; k < ntiles; ++k) {
+        from = tiles[k];
+        UNTILE(i, j, from);
+
+        // Add [*, j]
+        for (int ti = i-1; ti >= 0; --ti) {
+            to = TILE(ti, j);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        for (int ti = i+1; ti < 8; ++ti) {
+            to = TILE(ti, j);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+
+        // Add [i, *]
+        for (int tj = j-1; tj >=0; --tj) {
+            to = TILE(i, tj);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+        for (int tj = j+1; tj < 8; ++tj) {
+            to = TILE(i, tj);
+            m = ONEHOT(to);
+            if (cmask & m) {
+                // Can't do our own pieces
+                break;
+            } else if (omask & m) {
+                // Can capture, but go no further
+                TRYADD({from, to});
+                break;
+            }
+            TRYADD({from, to});
+        }
+    }
+
 
     /* Generate pawn moves */
     ntiles = bbtiles(piece[Piece::P] & cmask, tiles);
@@ -346,29 +627,180 @@ void State::getmoves(vector<move>& res) const {
 
         if (tomove == Color::WHITE) {
             // White pawns move up
-            if (j == 1) {
-                // Can move 2 tiles
-                TRYADD({from, TILE(i, j+2)});
+
+            to = TILE(i, j+1);
+            m = ONEHOT(to);
+            if (!((cmask & m) || (omask & m))) {
+                TRYADD({from, to});
+
+                if (j == 1) {
+                    // Can move 2 tiles
+                    to = TILE(i, j+2);
+                    m = ONEHOT(to);
+                    if (!((cmask & m) || (omask & m))) {
+                        TRYADD({from, to});
+                    }
+                }
             }
-            TRYADD({from, TILE(i, j+1)});
+
+            // Handle diagonal captures
+            if (j <= 6) {
+                if (i <= 6) {
+                    to = TILE(i+1, j+1);
+                    m = ONEHOT(to);
+                    // Handle en-passant capture as well, with 'ep==to'
+                    if ((omask & m) || ep == to) {
+                        TRYADD({from, to});
+                    }
+                }
+                if (i >= 1) {
+                    to = TILE(i-1, j+1);
+                    m = ONEHOT(to);
+                    if ((omask & m) || ep == to) {
+                        TRYADD({from, to});
+                    }
+                }
+            }
+
         } else {
             // Black pawns move down
-            if (j == 6) {
-                // Can move 2 tiles
-                TRYADD({from, TILE(i, j-2)});
+            to = TILE(i, j-1);
+            m = ONEHOT(to);
+            if (!((cmask & m) || (omask & m))) {
+                TRYADD({from, to});
+
+                if (j == 6) {
+                    // Can move 2 tiles
+                    to = TILE(i, j-2);
+                    m = ONEHOT(to);
+                    if (!((cmask & m) || (omask & m))) {
+                        TRYADD({from, to});
+                    }
+                }
             }
-            TRYADD({from, TILE(i, j-1)});
+
+            // Handle diagonal captures
+            if (j >= 1) {
+                if (i <= 6) {
+                    to = TILE(i+1, j-1);
+                    m = ONEHOT(to);
+                    if ((omask & m) || ep == to) {
+                        TRYADD({from, to});
+                    }
+                }
+                if (i >= 1) {
+                    to = TILE(i-1, j-1);
+                    m = ONEHOT(to);
+                    if ((omask & m) || ep == to) {
+                        TRYADD({from, to});
+                    }
+                }
+            }
+        }
+    }
+
+    /* Generate castling moves */
+    if (!ignorecastling) {
+            
+        if (tomove == Color::WHITE && (c_WK || c_WQ)) {
+
+            // White can castle either king or queen or both
+            // First, let's calculate moves that black has to see if they are attacking the squares we are going through
+            // We do this by duplicating the state but chaning the 'tomove' color
+            State ts = *this;
+            ts.tomove = Color::BLACK;
+            vector<move> bmv;
+            ts.getmoves(bmv, true, true);
+
+
+            if (c_WK) {
+                // Three tiles that must be passed through not in check
+                int t0 = TILE(4, 0), t1 = TILE(5, 0), t2 = TILE(6, 0);
+
+                bool good = true;
+                for (int k = 0; k < bmv.size(); ++k) {
+                    int dest = bmv[k].to;
+                    if (dest == t0 || dest == t1 || dest == t2) {
+                        good = false;
+                        break;
+                    }
+                }
+
+                if (good) {
+                    // Just add, since we already checked whether we were attacked
+                    res.push_back({ TILE(4, 0), TILE(6, 0) });
+                }
+
+            }
+            if (c_WQ) {
+                // Three tiles that must be passed through not in check
+                int t0 = TILE(4, 0), t1 = TILE(3, 0), t2 = TILE(2, 0);
+
+                bool good = true;
+                for (int k = 0; k < bmv.size(); ++k) {
+                    int dest = bmv[k].to;
+                    if (dest == t0 || dest == t1 || dest == t2) {
+                        good = false;
+                        break;
+                    }
+                }
+
+                if (good) {
+                    // Just add, since we already checked whether we were attacked
+                    res.push_back({ TILE(4, 0), TILE(2, 0) });
+                }
+            }
+        } else if (tomove == Color::BLACK && (c_BK || c_WQ)) {
+
+            // Black can castle either king or queen or both
+            // First, let's calculate moves that white has to see if they are attacking the squares we are going through
+            // We do this by duplicating the state but chaning the 'tomove' color
+            State ts = *this;
+            ts.tomove = Color::WHITE;
+            vector<move> bmv;
+            ts.getmoves(bmv, true, true);
+
+            if (c_BK) {
+                // Three tiles that must be passed through not in check
+                int t0 = TILE(4, 7), t1 = TILE(5, 7), t2 = TILE(6, 7);
+
+                bool good = true;
+                for (int k = 0; k < bmv.size(); ++k) {
+                    int dest = bmv[k].to;
+                    if (dest == t0 || dest == t1 || dest == t2) {
+                        good = false;
+                        break;
+                    }
+                }
+
+                if (good) {
+                    // Just add, since we already checked whether we were attacked
+                    res.push_back({ TILE(4, 7), TILE(6, 7) });
+                }
+
+            }
+            if (c_BQ) {
+                // Three tiles that must be passed through not in check
+                int t0 = TILE(4, 7), t1 = TILE(3, 7), t2 = TILE(2, 7);
+
+                bool good = true;
+                for (int k = 0; k < bmv.size(); ++k) {
+                    int dest = bmv[k].to;
+                    if (dest == t0 || dest == t1 || dest == t2) {
+                        good = false;
+                        break;
+                    }
+                }
+
+                if (good) {
+                    // Just add, since we already checked whether we were attacked
+                    res.push_back({ TILE(4, 7), TILE(2, 7) });
+                }
+            }
         }
     }
 
 }
-
-
-bool State::is_attacked(int tile, Color by) const {
-
-    return false;
-}
-
 
 
 }

@@ -122,6 +122,7 @@ static void do_uci(Engine& eng) {
 
 int main(int argc, char** argv) {
 
+    srand(time(NULL));
     // Create engine
     Engine eng;
     do_uci(eng);
