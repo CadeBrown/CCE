@@ -14,7 +14,7 @@ LDFLAGS      +=
 
 # debug
 CXXFLAGS += -g
-
+#CXXFLAGS += -Ofast
 
 # -*- Files -*-
 

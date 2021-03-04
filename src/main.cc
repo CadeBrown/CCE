@@ -21,11 +21,7 @@ static void splitargs(const string& line, vector<string>& args) {
 }
 
 
-#define FILEDEBUG(...) do { \
-    FILE* fp = fopen("/home/cade/projects/cce/e.log", "a"); \
-    fprintf(fp, __VA_ARGS__); \
-    fclose(fp); \
-} while (0)
+
 
 // Accept UCI commands and feed them to 'eng'
 static void do_uci(Engine& eng) {
@@ -101,8 +97,10 @@ static void do_uci(Engine& eng) {
             eng.stop();
             // Print out best move (we need to lock it to avoid undefined behaviour)
             eng.lock.lock();
+
             cout << "bestmove " << eng.best_move.LAN() << endl;
             eng.lock.unlock();
+
 
         } else if (args[0] == "stop") {
             // Stop computing
@@ -110,7 +108,7 @@ static void do_uci(Engine& eng) {
 
             // Print out best move (we need to lock it to avoid undefined behaviour)
             eng.lock.lock();
-            cout << "bestmove " << eng.best_move.LAN() << endl;
+            //cout << "bestmove " << eng.best_move.LAN() << endl;
             eng.lock.unlock();
 
         } else {
@@ -120,11 +118,51 @@ static void do_uci(Engine& eng) {
     }
 }
 
+
+// Perf test
+
+static size_t perft(const State& s, int dep=0) {
+    if (dep <= 0) {
+        return 1;
+    }
+
+    size_t res = 0;
+
+    // Get all available moves
+    vector<cce::move> moves;
+    s.getmoves(moves);
+
+    for (int i = 0; i < moves.size(); ++i) {
+        State ns = s;
+        ns.apply(moves[i]);
+        res += perft(ns, dep-1);
+    }
+
+    return res;
+}
+
 int main(int argc, char** argv) {
 
     srand(time(NULL));
+
     // Create engine
     Engine eng;
-    do_uci(eng);
+    State s = State::from_FEN(FEN_START);
+
+
+    //cout << perft(s, 1) << endl;
+    //cout << perft(s, 2) << endl;
+    //cout << perft(s, 3) << endl;
+    cout << perft(s, 4) << endl;
+    //cout << perft(s, 5) << endl;
+    //cout << perft(s, 6) << endl;
+
+    /*
+    State s = State::from_FEN("r2k1bnr/pp3ppp/5q2/1NpP4/2nPQ3/2P5/PP3PPP/RNB1R1K1 w - - 0 13");
+
+    pair<cce::move, eval> bm = eng.findbest1(s);
+    cout << "BM: " << bm.first.LAN() << " EV: " << bm.second.getstr() << endl;
+    */
+    //do_uci(eng);
 
 }

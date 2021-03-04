@@ -12,13 +12,16 @@
 // Stanard library
 #include <iostream>
 #include <sstream>
+#include <cmath>
 
 // Multithreading support
 #include <mutex>
 #include <thread>
 
+
 // STL
 #include <string>
+#include <algorithm>
 #include <vector>
 
 // Use C++ standard libary without 'std::' prefix
@@ -226,7 +229,10 @@ struct State {
             }
         }
         // Assert we found a piece from the place that is moving!
-        assert(p < N_PIECES);
+        //assert(p < N_PIECES);
+        if (p >= N_PIECES) {
+            cout << "IN " << to_FEN() << " MOVE " << mv.LAN() << endl;
+        }
 
         // Remove where it was moving from
         color[tomove] &= ~mf;
@@ -249,7 +255,66 @@ struct State {
         piece[p] |= mt;
 
 
-        // TODO: Handle castling
+        // Handle castling
+        if (tomove == Color::WHITE) {
+            if (mv.from == TILE(4, 0)) {
+                if (mv.to == TILE(6, 0) && c_WK) {
+                    // White kingside
+                    bb rf = ONEHOT(TILE(7, 0));
+                    bb rt = ONEHOT(TILE(5, 0));
+                    color[Color::WHITE] &= ~rf;
+                    color[Color::WHITE] |= rt;
+                    piece[Piece::R] &= ~rf;
+                    piece[Piece::R] |= rt;
+                } else if (mv.to == TILE(2, 0) && c_WQ) {
+                    // White queenside
+                    bb rf = ONEHOT(TILE(0, 0));
+                    bb rt = ONEHOT(TILE(3, 0));
+                    color[Color::WHITE] &= ~rf;
+                    color[Color::WHITE] |= rt;
+                    piece[Piece::R] &= ~rf;
+                    piece[Piece::R] |= rt;
+                }
+                c_WK = c_WQ = false;
+            }
+            if (mv.from == TILE(0, 0)) {
+                c_WQ = false;
+            } else if (mv.from == TILE(0, 7)) {
+                c_WK = false;
+            }
+        } else {
+            if (mv.from == TILE(4, 7)) {
+                if (mv.to == TILE(6, 7) && c_BK) {
+                    // Black kingside
+                    bb rf = ONEHOT(TILE(7, 7));
+                    bb rt = ONEHOT(TILE(5, 7));
+                    color[Color::WHITE] &= ~rf;
+                    color[Color::WHITE] |= rt;
+                    piece[Piece::R] &= ~rf;
+                    piece[Piece::R] |= rt;
+                    c_WK = false;
+                } else if (mv.to == TILE(2, 7) && c_BQ) {
+                    // Black queenside
+                    bb rf = ONEHOT(TILE(0, 7));
+                    bb rt = ONEHOT(TILE(3, 7));
+                    color[Color::WHITE] &= ~rf;
+                    color[Color::WHITE] |= rt;
+                    piece[Piece::R] &= ~rf;
+                    piece[Piece::R] |= rt;
+                }
+
+                c_BK = c_BQ = false;
+            }
+
+            if (mv.from == TILE(7, 0)) {
+                c_BQ = false;
+            } else if (mv.from == TILE(7, 7)) {
+                c_BK = false;
+            }
+        }
+
+
+
         // TODO: Handle en passant
         ep = -1;
 
@@ -271,6 +336,11 @@ struct State {
     // Returns whether the tile 'tile' is being attacked by the color about to move
     bool is_attacked(int tile) const;
 
+    // Calculates whether the state represents a finished game, either by stalemate or checkmate (or draw
+    //   due to repetition)
+    // Stores status the winner, +1==white, 0==draw, -1==black
+    bool is_done(int& status) const;
+
 };
 
 // cce::eval - Chess position evaluation
@@ -278,48 +348,47 @@ struct State {
 //
 struct eval {
 
-    // If true, there is a forced checkmate with best play
-    bool ismate;
+    // Score, in pawns, for white
+    //   if > 0, then position is better for white
+    //   if < 0, then position is better for black
+    // If 'score==INFINITY' or 'score==-INFINITY', there is a forced checkmate in 'matein' moves
+    float score;
 
-    // Discriminated union
-    union {
-        
-        // Number of moves until checkmate
-        //   if > 0, then it is a forced checkmate for white
-        //   if < 0, then it is a forced checkmate for black
-        // This is used if 'ismate==true'
-        int matein;
+    // Number of moves until checkmate (assuming best play)
+    // Only used if 'score == INFINITY' (checkmate for white) or 'score == -INFINITY' (checkmate for black)
+    int matein;
 
-        // Score, in pawns, for white
-        //   if > 0, then position is better for white
-        //   if < 0, then position is better for black
-        // This is used if 'ismate==false'
-        float score;
-    };
+    // Contructor
+    eval(float score_=0.0f, int matein_=-1) : score(score_), matein(matein_) {}
 
+    // Return a forced draw
+    static eval draw() {
+        return eval(NAN);
+    }
 
-    // Contructors
-    eval(float score_=0.0f) : ismate(false), score(score_) {}
-    eval(int matein_) : ismate(true), matein(matein_) {}
+    // Returns whether the evaluation is a forced draw
+    bool isdraw() const { return isnan(score); }
+
+    // Returns whether the evaluation is a forced checkmate
+    bool ismate() const { return isinf(score); }
 
     // Return evaluation as a string
     string getstr() const {
-        if (ismate) {
-            if (matein >= 0) {
+        if (isdraw()) {
+            return "DRAW";
+        } else if (ismate()) {
+            if (score >= 0) {
                 // + for white
                 return "M+" + to_string(matein);
             } else {
                 // - for black
-                return "M" + to_string(matein);
+                return "M-" + to_string(matein);
             }
         } else {
-            if (score >= 0) {
-                // We should add sign to signify it is a signed quantity
-                return "+" + to_string(score); 
-            } else {
-                // Negative numbers will already have sign
-                return to_string(score);
-            }
+            // Use snprintf so we can specify that only 2 decimal digits should be printed
+            char tmp[64];
+            snprintf(tmp, sizeof(tmp) - 1, "%+.2f", score);
+            return (string)tmp;
         }
     }
 
@@ -328,31 +397,34 @@ struct eval {
     //   if = 0, then a is the same as b
     //   if < 0, then b is worse for white than a
     static int cmp(const eval& a, const eval& b) {
-        if (a.ismate && b.ismate) {
-            // Both have forced mates, so compare the number of moves
-            return b.matein - a.matein;
-        } else if (a.ismate) {
-            // a has mate, b does not 
-            if (a.matein > 0) {
-                // Mate is for white, so a > b
-                return +1;
-            } else {
-                // Mate is for black, so a < b
-                return -1;
-            }
-        } else if (b.ismate) {
-            // b has mate, a does not 
-            if (b.matein > 0) {
-                // Mate is for white, so a < b
-                return -1;
-            } else {
-                // Mate is for black, so a > b
-                return +1;
-            }
+        if (a.score > b.score) {
+            return +1;
+        } else if (a.score < b.score) {
+            return -1;
         } else {
-            // Neither have mate, so compare scores
-            float d = b.score - a.score;
-            return d == 0 ? 0 : (d > 0 ? +1 : -1);
+            if (a.ismate() && b.ismate()) {
+                
+                if (a.score > 0) {
+                    // The checkmate is for white
+                    // Choose faster checkmate
+                    if (a.matein < b.matein) {
+                        return +1;
+                    } else {
+                        return -1;
+                    }
+                } else {
+                    // The checkmate is for black
+                    // Choose slower checkmate
+                    if (a.matein > b.matein) {
+                        return +1;
+                    } else {
+                        return -1;
+                    }
+                }
+            } else {
+                // Draw
+                return 0;
+            }
         }
     }
 
@@ -389,6 +461,16 @@ struct Engine {
 
     // Stop computing the current position
     void stop();
+
+
+    // Static evaluation method, which does not recurse or check move combinations
+    eval eval_static(const State& s);
+
+    // Find the best move, by using the evaluation function with a single move depth
+    pair<move, eval> findbest1(const State& s);
+
+    // Find the best move with a given depth, brute force search
+    pair<move, eval> findbestN(const State& s, int dep=1);
 
 };
 
